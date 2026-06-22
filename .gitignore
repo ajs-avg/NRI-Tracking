@@ -19,3 +19,7 @@ frontend/out/
 
 # OS
 .DS_Store
+
+# TypeScript build cache
+frontend/tsconfig.tsbuildinfo
+*.tsbuildinfo

@@ -1,6 +1,9 @@
 // API client for the FastAPI backend. All counting comes from the backend engine.
 
-const BASE = process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:8000";
+// API base must be provided via NEXT_PUBLIC_API_BASE (set in Vercel / .env.local).
+// No hardcoded fallback — the deployed app never points at localhost.
+export const API_BASE = process.env.NEXT_PUBLIC_API_BASE ?? "";
+const BASE = API_BASE;
 
 export type Person = { id: number; code: string; name: string };
 

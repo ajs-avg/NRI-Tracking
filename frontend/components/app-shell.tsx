@@ -4,6 +4,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { CalendarDays, Home, Plane, PlusCircle, Settings } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
+import { API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
 const NAV = [
@@ -76,8 +77,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
       <main className="flex-1 pb-16">
         {error ? (
           <div className="rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-            Couldn't connect to the backend: {error}. Is the FastAPI server running
-            (http://localhost:8000)?
+            Couldn't connect to the backend: {error}. Check that the API is
+            reachable{API_BASE ? ` (${API_BASE})` : " — NEXT_PUBLIC_API_BASE is not set"}.
           </div>
         ) : loading ? (
           <div className="text-sm text-muted-foreground">Loading…</div>

@@ -36,6 +36,8 @@ Deploy in this order: **Supabase → Render → Vercel** (each needs the previou
    - **Runtime:** Python 3
    - **Build Command:** `pip install -r requirements.txt`
    - **Start Command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
+
+   > **Python is pinned to 3.12** via `backend/.python-version` (+ `backend/runtime.txt`). Required: on Python 3.14 the pinned `pydantic-core==2.27.1` has no prebuilt wheel and tries to compile from Rust source, which fails on Render's read-only filesystem. If Render still picks a wrong version, also set env var `PYTHON_VERSION` = `3.12.8`.
 3. **Environment variables:**
    | Key | Value |
    |---|---|

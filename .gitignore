@@ -1,0 +1,21 @@
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+backend/nri_tracker.db
+.pytest_cache/
+
+# Secrets — never commit
+.env
+backend/.env
+*.env
+!.env.example
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+.env*.local
+
+# OS
+.DS_Store

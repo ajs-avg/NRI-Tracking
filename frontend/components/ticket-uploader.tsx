@@ -108,6 +108,7 @@ export function TicketUploader({
                 <tr className="text-left">
                   <th className="p-1">✓</th>
                   <th className="p-1">Date</th>
+                  <th className="p-1">Arr time</th>
                   <th className="p-1">From</th>
                   <th className="p-1">To</th>
                   <th className="p-1">Flight</th>
@@ -131,6 +132,15 @@ export function TicketUploader({
                         onChange={(e) => patch(i, { date: e.target.value || null })}
                       />
                       {!r.date && <span className="ml-1 text-amber-600">year?</span>}
+                    </td>
+                    <td className="p-1">
+                      <input
+                        type="time"
+                        className={inputCls}
+                        value={r.arr_time ?? ""}
+                        onChange={(e) => patch(i, { arr_time: e.target.value || null })}
+                        title="Arrival time — bump the date if immigration is next day"
+                      />
                     </td>
                     <td className="p-1">
                       <select

@@ -16,6 +16,8 @@ export default function EntryPage() {
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [msg, setMsg] = React.useState<string | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [editId, setEditId] = React.useState<number | null>(null);
+  const [ef, setEf] = React.useState({ country: "AE", from_date: "", to_date: "", arr_time: "", note: "" });
 
   const load = React.useCallback(() => {
     if (!current) return;
@@ -58,6 +60,40 @@ export default function EntryPage() {
   async function remove(id: number) {
     await api.deleteEntry(id);
     load();
+  }
+
+  function startEdit(e: Entry) {
+    setEditId(e.id);
+    setEf({
+      country: e.country,
+      from_date: e.from_date,
+      to_date: e.to_date,
+      arr_time: e.arr_time ?? "",
+      note: e.note ?? "",
+    });
+  }
+
+  async function saveEdit(id: number) {
+    if (ef.to_date < ef.from_date) {
+      setMsg("To date cannot be before From date.");
+      return;
+    }
+    setBusy(true);
+    try {
+      await api.updateEntry(id, {
+        country: ef.country,
+        from_date: ef.from_date,
+        to_date: ef.to_date,
+        arr_time: ef.arr_time || null,
+        note: ef.note,
+      });
+      setEditId(null);
+      load();
+    } catch (err: any) {
+      setMsg(`Error: ${err.message ?? err}`);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const inputCls =
@@ -111,17 +147,38 @@ export default function EntryPage() {
             <p className="text-sm text-muted-foreground">No entries yet.</p>
           ) : (
             <ul className="space-y-2">
-              {entries.map((e) => (
-                <li key={e.id} className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-sm">
-                  <span>
-                    {e.country === "AE" ? "🇦🇪" : "🇮🇳"} {e.from_date} → {e.to_date}
-                    {e.note && <span className="ml-2 text-xs text-muted-foreground">{e.note}</span>}
-                  </span>
-                  <Button variant="ghost" size="sm" onClick={() => remove(e.id)}>
-                    Delete
-                  </Button>
-                </li>
-              ))}
+              {entries.map((e) =>
+                editId === e.id ? (
+                  <li key={e.id} className="space-y-2 rounded-lg bg-muted px-3 py-2 text-sm">
+                    <div className="grid grid-cols-2 gap-2">
+                      <select className={inputCls} value={ef.country} onChange={(ev) => setEf({ ...ef, country: ev.target.value })}>
+                        <option value="AE">🇦🇪 Dubai</option>
+                        <option value="IN">🇮🇳 India</option>
+                      </select>
+                      <input type="time" className={inputCls} value={ef.arr_time} onChange={(ev) => setEf({ ...ef, arr_time: ev.target.value })} title="Arrival time" />
+                      <input type="date" className={inputCls} value={ef.from_date} onChange={(ev) => setEf({ ...ef, from_date: ev.target.value })} />
+                      <input type="date" className={inputCls} value={ef.to_date} onChange={(ev) => setEf({ ...ef, to_date: ev.target.value })} />
+                    </div>
+                    <input className={inputCls} placeholder="Note" value={ef.note} onChange={(ev) => setEf({ ...ef, note: ev.target.value })} />
+                    <div className="flex gap-2">
+                      <Button size="sm" disabled={busy} onClick={() => saveEdit(e.id)}>Save</Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditId(null)}>Cancel</Button>
+                    </div>
+                  </li>
+                ) : (
+                  <li key={e.id} className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-sm">
+                    <span>
+                      {e.country === "AE" ? "🇦🇪" : "🇮🇳"} {e.from_date} → {e.to_date}
+                      {e.arr_time && <span className="ml-2 text-xs text-muted-foreground">⏱ {e.arr_time}</span>}
+                      {e.note && <span className="ml-2 text-xs text-muted-foreground">{e.note}</span>}
+                    </span>
+                    <span className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => startEdit(e)}>Edit</Button>
+                      <Button variant="ghost" size="sm" onClick={() => remove(e.id)}>Delete</Button>
+                    </span>
+                  </li>
+                )
+              )}
             </ul>
           )}
         </CardContent>

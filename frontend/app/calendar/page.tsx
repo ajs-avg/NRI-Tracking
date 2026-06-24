@@ -29,6 +29,8 @@ export default function CalendarPage() {
   const [selected, setSelected] = React.useState<string | null>(null);
   const [entries, setEntries] = React.useState<Entry[]>([]);
   const [loading, setLoading] = React.useState(false);
+  const [editId, setEditId] = React.useState<number | null>(null);
+  const [ef, setEf] = React.useState({ country: "AE", from_date: "", to_date: "", arr_time: "" });
 
   const month = ymd(cursor);
 
@@ -67,6 +69,23 @@ export default function CalendarPage() {
 
   async function removeEntry(id: number) {
     await api.deleteEntry(id);
+    load();
+  }
+
+  function startEdit(e: Entry) {
+    setEditId(e.id);
+    setEf({ country: e.country, from_date: e.from_date, to_date: e.to_date, arr_time: e.arr_time ?? "" });
+  }
+
+  async function saveEdit(id: number) {
+    if (ef.to_date < ef.from_date) return;
+    await api.updateEntry(id, {
+      country: ef.country,
+      from_date: ef.from_date,
+      to_date: ef.to_date,
+      arr_time: ef.arr_time || null,
+    });
+    setEditId(null);
     load();
   }
 
@@ -145,17 +164,37 @@ export default function CalendarPage() {
             </p>
           ) : (
             <ul className="mb-3 space-y-2">
-              {selectedEntries.map((e) => (
-                <li key={e.id} className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-sm">
-                  <span>
-                    {e.country === "AE" ? "🇦🇪 Dubai" : "🇮🇳 India"} · {e.from_date} → {e.to_date}
-                    <span className="ml-2 text-xs text-muted-foreground">({e.source})</span>
-                  </span>
-                  <Button variant="ghost" size="sm" onClick={() => removeEntry(e.id)}>
-                    Delete
-                  </Button>
-                </li>
-              ))}
+              {selectedEntries.map((e) =>
+                editId === e.id ? (
+                  <li key={e.id} className="space-y-2 rounded-lg bg-muted px-3 py-2 text-sm">
+                    <div className="grid grid-cols-2 gap-2">
+                      <select className="h-8 rounded-md border border-border bg-card px-2 text-xs" value={ef.country} onChange={(ev) => setEf({ ...ef, country: ev.target.value })}>
+                        <option value="AE">🇦🇪 Dubai</option>
+                        <option value="IN">🇮🇳 India</option>
+                      </select>
+                      <input type="time" className="h-8 rounded-md border border-border bg-card px-2 text-xs" value={ef.arr_time} onChange={(ev) => setEf({ ...ef, arr_time: ev.target.value })} title="Arrival time" />
+                      <input type="date" className="h-8 rounded-md border border-border bg-card px-2 text-xs" value={ef.from_date} onChange={(ev) => setEf({ ...ef, from_date: ev.target.value })} />
+                      <input type="date" className="h-8 rounded-md border border-border bg-card px-2 text-xs" value={ef.to_date} onChange={(ev) => setEf({ ...ef, to_date: ev.target.value })} />
+                    </div>
+                    <div className="flex gap-2">
+                      <Button size="sm" onClick={() => saveEdit(e.id)}>Save</Button>
+                      <Button variant="ghost" size="sm" onClick={() => setEditId(null)}>Cancel</Button>
+                    </div>
+                  </li>
+                ) : (
+                  <li key={e.id} className="flex items-center justify-between rounded-lg bg-muted px-3 py-2 text-sm">
+                    <span>
+                      {e.country === "AE" ? "🇦🇪 Dubai" : "🇮🇳 India"} · {e.from_date} → {e.to_date}
+                      {e.arr_time && <span className="ml-1">⏱ {e.arr_time}</span>}
+                      <span className="ml-2 text-xs text-muted-foreground">({e.source})</span>
+                    </span>
+                    <span className="flex gap-1">
+                      <Button variant="ghost" size="sm" onClick={() => startEdit(e)}>Edit</Button>
+                      <Button variant="ghost" size="sm" onClick={() => removeEntry(e.id)}>Delete</Button>
+                    </span>
+                  </li>
+                )
+              )}
             </ul>
           )}
 

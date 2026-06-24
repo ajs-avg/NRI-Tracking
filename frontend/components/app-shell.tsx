@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { CalendarDays, Home, Plane, PlusCircle, Settings } from "lucide-react";
+import { CalendarCheck, CalendarDays, Home, Plane, PlusCircle, Settings } from "lucide-react";
 import { useProfile } from "@/components/profile-context";
 import { API_BASE } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,7 @@ const NAV = [
   { href: "/", label: "Dashboard", icon: Home },
   { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/entry", label: "Add Entry", icon: PlusCircle },
+  { href: "/commitments", label: "Commitments", icon: CalendarCheck },
   { href: "/trips", label: "Trips", icon: Plane },
   { href: "/settings", label: "Settings", icon: Settings },
 ];

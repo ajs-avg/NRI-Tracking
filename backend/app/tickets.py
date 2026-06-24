@@ -35,9 +35,12 @@ PROMPT = (
     "Return ONLY valid JSON, no markdown, in exactly this shape:\n"
     '{"segments": [{"date": "YYYY-MM-DD or null", "from_airport": "", "to_airport": "", '
     '"from_country": "IN|AE|OTHER", "to_country": "IN|AE|OTHER", "airline": "", '
-    '"flight_no": "", "confidence": 0.0}]}\n'
+    '"flight_no": "", "dep_time": "HH:MM or null", "arr_time": "HH:MM or null", '
+    '"confidence": 0.0}]}\n'
     "Rules: include every flight segment shown. Use the year only if printed or unambiguous, "
-    "else set date to null. Country codes: India=IN, UAE/Dubai/Abu Dhabi/Sharjah=AE, else OTHER. "
+    "else set date to null. dep_time/arr_time are local 24-hour times (HH:MM) of departure "
+    "and arrival as printed; null if not shown. Country codes: India=IN, UAE/Dubai/Abu Dhabi/"
+    "Sharjah=AE, else OTHER. "
     "confidence is 0..1. If the image is not a flight ticket, return {\"segments\": []}."
 )
 

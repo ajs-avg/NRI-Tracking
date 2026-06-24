@@ -7,8 +7,9 @@ Future GPS phase will add a LocationPing source feeding the same counting engine
 from __future__ import annotations
 
 from datetime import date
+from typing import Optional
 
-from sqlalchemy import Date, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, Date, ForeignKey, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from .database import Base
@@ -24,6 +25,11 @@ MODE_LIMIT = "limit_to_watch"
 # Window types.
 WINDOW_CALENDAR = "calendar_year"
 WINDOW_FINANCIAL = "financial_year"
+
+# Commitment event types (Feature 2).
+EVENT_MANDATORY = "mandatory"  # must be in `country` (e.g. wedding, school function)
+EVENT_OPTIONAL = "optional"  # neutral
+EVENT_TRAVEL_OPPORTUNITY = "travel_opportunity"  # easier to travel (e.g. school holidays)
 
 
 class Person(Base):
@@ -45,6 +51,9 @@ class Person(Base):
     trips: Mapped[list["PlannedTrip"]] = relationship(
         back_populates="person", cascade="all, delete-orphan"
     )
+    events: Mapped[list["CommitmentEvent"]] = relationship(
+        back_populates="person", cascade="all, delete-orphan"
+    )
 
 
 class ManualEntry(Base):
@@ -59,6 +68,11 @@ class ManualEntry(Base):
     to_date: Mapped[date] = mapped_column(Date)
     source: Mapped[str] = mapped_column(String(16), default="manual")
     note: Mapped[str] = mapped_column(String(255), default="")
+    # Informational only — the engine counts by DATE, never by time. These let the
+    # user record the real clock time (e.g. immigration cleared 00:10 next day) so
+    # they can decide which calendar date the entry belongs to. "HH:MM" or null.
+    dep_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default=None)
+    arr_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default=None)
 
     person: Mapped["Person"] = relationship(back_populates="entries")
 
@@ -104,3 +118,29 @@ class PlannedTrip(Base):
     status: Mapped[str] = mapped_column(String(16), default="accepted")
 
     person: Mapped["Person"] = relationship(back_populates="trips")
+
+
+class CommitmentEvent(Base):
+    """A personal/professional commitment that the trip planner reasons about.
+
+    Events are PLANNING CONSTRAINTS ONLY — they never feed the counting engine
+    (events != coverage). A `mandatory` + `attend=True` + India event is a blackout
+    window the planner must avoid; a `travel_opportunity` window is a preferred slot
+    for UAE trips. `attend=None` means the user hasn't answered yet (drives the
+    "will you attend?" prompt).
+    """
+
+    __tablename__ = "commitment_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), index=True)
+    title: Mapped[str] = mapped_column(String(160), default="")
+    country: Mapped[str] = mapped_column(String(6), default=COUNTRY_INDIA)  # IN|AE|OTHER
+    from_date: Mapped[date] = mapped_column(Date)
+    to_date: Mapped[date] = mapped_column(Date)
+    event_type: Mapped[str] = mapped_column(String(20), default=EVENT_MANDATORY)
+    attend: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual|csv
+    note: Mapped[str] = mapped_column(String(255), default="")
+
+    person: Mapped["Person"] = relationship(back_populates="events")

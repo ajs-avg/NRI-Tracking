@@ -1,6 +1,7 @@
 """Create tables and seed the 3 fixed profiles with default counters."""
 from __future__ import annotations
 
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from .database import Base, SessionLocal, engine
@@ -59,8 +60,34 @@ def seed(db: Session) -> None:
     db.commit()
 
 
+# Lightweight, idempotent column additions for tables that already exist in older
+# DBs. `create_all` only creates MISSING tables — it never ALTERs existing ones —
+# so new nullable columns are added here. (No Alembic in this project.)
+_COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
+    "manual_entries": {
+        "dep_time": "VARCHAR(5)",
+        "arr_time": "VARCHAR(5)",
+    },
+}
+
+
+def ensure_columns() -> None:
+    """Add any missing nullable columns to existing tables (SQLite + Postgres)."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    with engine.begin() as conn:
+        for table, columns in _COLUMN_MIGRATIONS.items():
+            if table not in existing_tables:
+                continue  # create_all will build it fresh with all columns
+            present = {c["name"] for c in inspector.get_columns(table)}
+            for name, ddl_type in columns.items():
+                if name not in present:
+                    conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {name} {ddl_type}"))
+
+
 def init_db() -> None:
     Base.metadata.create_all(bind=engine)
+    ensure_columns()
     db = SessionLocal()
     try:
         seed(db)

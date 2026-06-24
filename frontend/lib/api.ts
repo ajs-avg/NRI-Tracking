@@ -45,6 +45,8 @@ export type Entry = {
   to_date: string;
   source: string;
   note: string;
+  dep_time?: string | null;
+  arr_time?: string | null;
 };
 
 export type Suggestion = {
@@ -53,6 +55,21 @@ export type Suggestion = {
   to: string;
   days: number;
   pendingAfter: number;
+  note?: string;
+};
+
+export type EventType = "mandatory" | "optional" | "travel_opportunity";
+
+export type CommitmentEvent = {
+  id: number;
+  title: string;
+  country: "IN" | "AE" | "OTHER";
+  from_date: string;
+  to_date: string;
+  event_type: EventType;
+  attend: boolean | null;
+  source: string;
+  note: string;
 };
 
 export type Trip = {
@@ -87,6 +104,8 @@ export type TicketSegment = {
   to_country: "IN" | "AE" | "OTHER";
   airline?: string;
   flight_no: string;
+  dep_time?: string | null;
+  arr_time?: string | null;
   confidence?: number;
 };
 
@@ -117,8 +136,14 @@ export const api = {
       `/persons/${pid}/calendar?month=${month}${asOf ? `&as_of=${asOf}` : ""}`
     ),
   entries: (pid: number) => req<Entry[]>(`/persons/${pid}/entries`),
-  createEntry: (pid: number, body: { country: string; from_date: string; to_date: string; note?: string }) =>
-    req<Entry>(`/persons/${pid}/entries`, { method: "POST", body: JSON.stringify(body) }),
+  createEntry: (
+    pid: number,
+    body: { country: string; from_date: string; to_date: string; note?: string; dep_time?: string | null; arr_time?: string | null }
+  ) => req<Entry>(`/persons/${pid}/entries`, { method: "POST", body: JSON.stringify(body) }),
+  updateEntry: (
+    id: number,
+    body: Partial<{ country: string; from_date: string; to_date: string; note: string; dep_time: string | null; arr_time: string | null }>
+  ) => req<Entry>(`/entries/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
   deleteEntry: (id: number) => req<void>(`/entries/${id}`, { method: "DELETE" }),
   analyzeTickets: async (pid: number, files: File[]): Promise<TicketAnalysis> => {
     const form = new FormData();
@@ -149,4 +174,21 @@ export const api = {
   settings: (pid: number) => req<AppSettings>(`/persons/${pid}/settings`),
   updateSettings: (pid: number, body: { default_trip_len: number; min_gap_days: number }) =>
     req<AppSettings>(`/persons/${pid}/settings`, { method: "PUT", body: JSON.stringify(body) }),
+  events: (pid: number) => req<CommitmentEvent[]>(`/persons/${pid}/events`),
+  createEvent: (
+    pid: number,
+    body: { title: string; country: string; from_date: string; to_date: string; event_type: string; attend?: boolean | null; note?: string }
+  ) => req<CommitmentEvent>(`/persons/${pid}/events`, { method: "POST", body: JSON.stringify(body) }),
+  updateEvent: (
+    id: number,
+    body: Partial<{ title: string; country: string; from_date: string; to_date: string; event_type: string; attend: boolean | null; note: string }>
+  ) => req<CommitmentEvent>(`/events/${id}`, { method: "PATCH", body: JSON.stringify(body) }),
+  deleteEvent: (id: number) => req<void>(`/events/${id}`, { method: "DELETE" }),
+  importEvents: async (pid: number, file: File): Promise<{ created: number; errors: string[] }> => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(`${BASE}/persons/${pid}/events/import`, { method: "POST", body: form });
+    if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => "")}`);
+    return res.json();
+  },
 };

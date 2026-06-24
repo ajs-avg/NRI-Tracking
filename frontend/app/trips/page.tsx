@@ -82,6 +82,7 @@ export default function TripsPage() {
                     <span className="ml-2 text-xs text-muted-foreground">
                       {s.days} days · after: {s.pendingAfter} pending
                     </span>
+                    {s.note && <span className="ml-2 text-xs text-violet-600">· {s.note}</span>}
                   </div>
                   <Button size="sm" disabled={busy === `${s.from}-${s.to}`} onClick={() => accept(s)}>
                     <Check className="h-3.5 w-3.5" /> Accept

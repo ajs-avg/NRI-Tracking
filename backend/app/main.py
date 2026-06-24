@@ -5,9 +5,11 @@ All counts derive from the engine; no counting logic lives here.
 from __future__ import annotations
 
 import calendar as _cal
+import csv
+import io
 import os
 from datetime import date
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
 
@@ -22,6 +24,7 @@ from . import engine
 from .counters import evaluate_counter
 from .database import get_db
 from .models import (
+    CommitmentEvent,
     CounterConfig,
     ManualEntry,
     Person,
@@ -33,6 +36,10 @@ from .schemas import (
     CounterConfigOut,
     EntryIn,
     EntryOut,
+    EntryUpdate,
+    EventIn,
+    EventOut,
+    EventUpdate,
     PersonOut,
     SettingsIn,
     SettingsOut,
@@ -225,9 +232,31 @@ def create_entry(person_id: int, body: EntryIn, db: Session = Depends(get_db)):
         from_date=body.from_date,
         to_date=body.to_date,
         note=body.note,
+        dep_time=body.dep_time,
+        arr_time=body.arr_time,
         source="manual",
     )
     db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+@app.patch("/entries/{entry_id}", response_model=EntryOut)
+def update_entry(entry_id: int, body: EntryUpdate, db: Session = Depends(get_db)):
+    """Edit a committed entry — used to correct the arrival date/time when the real
+    immigration day differs from the printed flight date (Feature 1)."""
+    entry = db.get(ManualEntry, entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail="Entry not found")
+
+    data = body.model_dump(exclude_unset=True)
+    for field in ("country", "from_date", "to_date", "note", "dep_time", "arr_time"):
+        if field in data:
+            setattr(entry, field, data[field])
+    if entry.to_date < entry.from_date:
+        raise HTTPException(status_code=400, detail="to_date must be >= from_date")
+
     db.commit()
     db.refresh(entry)
     return entry
@@ -302,6 +331,8 @@ def commit_tickets(
                     to_date=seg.date,
                     source="ticket",
                     note=f"{seg.from_airport}→{seg.to_airport} {seg.flight_no}".strip(),
+                    dep_time=seg.dep_time,
+                    arr_time=seg.arr_time,
                 )
             )
             created += 1
@@ -353,12 +384,34 @@ def get_suggestions(
         gap = settings.min_gap_days if settings else 14
         start_from = last_trip.to_date + timedelta(days=gap + 1)
 
+    # Build planning constraints from commitment events (Feature 2). Only events
+    # still ahead of us matter. Mandatory India events the user is attending are
+    # hard blackout windows; travel-opportunity windows are preferred trip slots.
+    events = (
+        db.query(CommitmentEvent)
+        .filter(CommitmentEvent.person_id == person_id)
+        .filter(CommitmentEvent.to_date >= ref)
+        .all()
+    )
+    blocked: List[Tuple[date, date, str]] = [
+        (e.from_date, e.to_date, e.title or "commitment")
+        for e in events
+        if e.event_type == "mandatory" and e.country == "IN" and e.attend is True
+    ]
+    prefer: List[Tuple[date, date, str]] = [
+        (e.from_date, e.to_date, e.title or "holidays")
+        for e in events
+        if e.event_type == "travel_opportunity" and e.attend is not False
+    ]
+
     trips = suggest_trips(
         pending=pending,
         trip_len=settings.default_trip_len if settings else 18,
         min_gap_days=settings.min_gap_days if settings else 14,
         start_from=start_from,
         window_end=win_end,
+        blocked=blocked,
+        prefer=prefer,
     )
     return {"pending": pending, "trips": trips}
 
@@ -399,6 +452,158 @@ def delete_trip(trip_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Trip not found")
     db.delete(trip)
     db.commit()
+
+
+# --------------------------------------------------------------------------- #
+# Commitment events (Feature 2) — manual CRUD + CSV import + RSVP
+# --------------------------------------------------------------------------- #
+@app.get("/persons/{person_id}/events", response_model=List[EventOut])
+def list_events(person_id: int, db: Session = Depends(get_db)):
+    _get_person(db, person_id)
+    return (
+        db.query(CommitmentEvent)
+        .filter(CommitmentEvent.person_id == person_id)
+        .order_by(CommitmentEvent.from_date)
+        .all()
+    )
+
+
+@app.post("/persons/{person_id}/events", response_model=EventOut, status_code=201)
+def create_event(person_id: int, body: EventIn, db: Session = Depends(get_db)):
+    _get_person(db, person_id)
+    event = CommitmentEvent(
+        person_id=person_id,
+        title=body.title,
+        country=body.country,
+        from_date=body.from_date,
+        to_date=body.to_date,
+        event_type=body.event_type,
+        attend=body.attend,
+        note=body.note,
+        source="manual",
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@app.patch("/events/{event_id}", response_model=EventOut)
+def update_event(event_id: int, body: EventUpdate, db: Session = Depends(get_db)):
+    """Edit an event or answer its RSVP (send just `attend`)."""
+    event = db.get(CommitmentEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    data = body.model_dump(exclude_unset=True)
+    for field in ("title", "country", "from_date", "to_date", "event_type", "attend", "note"):
+        if field in data:
+            setattr(event, field, data[field])
+    if event.to_date < event.from_date:
+        raise HTTPException(status_code=400, detail="to_date must be >= from_date")
+    db.commit()
+    db.refresh(event)
+    return event
+
+
+@app.delete("/events/{event_id}", status_code=204)
+def delete_event(event_id: int, db: Session = Depends(get_db)):
+    event = db.get(CommitmentEvent, event_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    db.delete(event)
+    db.commit()
+
+
+# Accept loose synonyms from the assistant's merged sheet.
+_EVENT_TYPE_ALIASES = {
+    "mandatory": "mandatory", "must": "mandatory", "required": "mandatory",
+    "function": "mandatory", "wedding": "mandatory", "office": "mandatory",
+    "optional": "optional", "maybe": "optional",
+    "travel_opportunity": "travel_opportunity", "travel opportunity": "travel_opportunity",
+    "holiday": "travel_opportunity", "holidays": "travel_opportunity",
+    "vacation": "travel_opportunity", "opportunity": "travel_opportunity",
+}
+_COUNTRY_ALIASES = {
+    "in": "IN", "india": "IN", "bombay": "IN", "mumbai": "IN", "🇮🇳": "IN",
+    "ae": "AE", "uae": "AE", "dubai": "AE", "abu dhabi": "AE", "🇦🇪": "AE",
+}
+
+
+def _parse_bool(v: str) -> Optional[bool]:
+    s = (v or "").strip().lower()
+    if s in ("yes", "y", "true", "1", "attend", "attending"):
+        return True
+    if s in ("no", "n", "false", "0", "skip", "skipping"):
+        return False
+    return None
+
+
+@app.post("/persons/{person_id}/events/import", status_code=201)
+def import_events(
+    person_id: int,
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    """Import commitment events from a CSV (the assistant's merged iCal+Google sheet,
+    exported to CSV). Flexible headers: title, country, from, to, type, attend, note."""
+    _get_person(db, person_id)
+    raw = file.file.read()
+    try:
+        text = raw.decode("utf-8-sig")  # tolerate Excel's BOM
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1")
+    reader = csv.DictReader(io.StringIO(text))
+    if not reader.fieldnames:
+        raise HTTPException(status_code=400, detail="CSV has no header row")
+
+    # Normalise headers -> lower-case keys.
+    def norm(row: dict) -> dict:
+        return {(k or "").strip().lower(): (v or "").strip() for k, v in row.items()}
+
+    def pick(row: dict, *names: str) -> str:
+        for n in names:
+            if n in row and row[n]:
+                return row[n]
+        return ""
+
+    created = 0
+    errors: List[str] = []
+    for i, raw_row in enumerate(reader, start=2):  # row 1 = header
+        row = norm(raw_row)
+        title = pick(row, "title", "event", "name", "summary")
+        from_s = pick(row, "from", "from_date", "start", "start_date", "date")
+        to_s = pick(row, "to", "to_date", "end", "end_date") or from_s
+        if not from_s:
+            errors.append(f"row {i}: missing start date")
+            continue
+        try:
+            from_d = date.fromisoformat(from_s[:10])
+            to_d = date.fromisoformat(to_s[:10])
+        except ValueError:
+            errors.append(f"row {i}: bad date (use YYYY-MM-DD)")
+            continue
+        if to_d < from_d:
+            from_d, to_d = to_d, from_d
+        country_raw = pick(row, "country", "location", "place").lower()
+        country = _COUNTRY_ALIASES.get(country_raw, "IN")
+        type_raw = pick(row, "type", "event_type", "category").lower()
+        event_type = _EVENT_TYPE_ALIASES.get(type_raw, "mandatory")
+        db.add(
+            CommitmentEvent(
+                person_id=person_id,
+                title=title or "(untitled)",
+                country=country,
+                from_date=from_d,
+                to_date=to_d,
+                event_type=event_type,
+                attend=_parse_bool(pick(row, "attend", "rsvp", "going")),
+                note=pick(row, "note", "notes", "description"),
+                source="csv",
+            )
+        )
+        created += 1
+    db.commit()
+    return {"created": created, "errors": errors}
 
 
 # --------------------------------------------------------------------------- #

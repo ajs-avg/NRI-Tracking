@@ -19,6 +19,8 @@ class EntryIn(BaseModel):
     from_date: date
     to_date: date
     note: str = ""
+    dep_time: Optional[str] = None  # "HH:MM" — informational only
+    arr_time: Optional[str] = None  # "HH:MM" — informational only
 
     @field_validator("country")
     @classmethod
@@ -36,6 +38,24 @@ class EntryIn(BaseModel):
         return v
 
 
+class EntryUpdate(BaseModel):
+    """Partial edit of a committed entry (Feature 1 — fix arrival date/time)."""
+
+    country: Optional[str] = None
+    from_date: Optional[date] = None
+    to_date: Optional[date] = None
+    note: Optional[str] = None
+    dep_time: Optional[str] = None
+    arr_time: Optional[str] = None
+
+    @field_validator("country")
+    @classmethod
+    def _country_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("IN", "AE"):
+            raise ValueError("country must be IN or AE")
+        return v
+
+
 class EntryOut(BaseModel):
     id: int
     country: str
@@ -43,6 +63,8 @@ class EntryOut(BaseModel):
     to_date: date
     source: str
     note: str
+    dep_time: Optional[str] = None
+    arr_time: Optional[str] = None
 
 
 class CounterConfigIn(BaseModel):
@@ -74,6 +96,8 @@ class TicketSegmentIn(BaseModel):
     from_country: str  # IN | AE | OTHER
     to_country: str
     flight_no: str = ""
+    dep_time: Optional[str] = None  # "HH:MM" 24h, from the ticket
+    arr_time: Optional[str] = None  # "HH:MM" 24h, from the ticket
 
 
 class TicketCommitIn(BaseModel):
@@ -92,3 +116,76 @@ class TripOut(BaseModel):
     from_date: date
     to_date: date
     status: str
+
+
+_EVENT_TYPES = ("mandatory", "optional", "travel_opportunity")
+
+
+class EventIn(BaseModel):
+    title: str = ""
+    country: str = "IN"  # IN | AE | OTHER
+    from_date: date
+    to_date: date
+    event_type: str = "mandatory"
+    attend: Optional[bool] = None
+    note: str = ""
+
+    @field_validator("country")
+    @classmethod
+    def _country_ok(cls, v: str) -> str:
+        if v not in ("IN", "AE", "OTHER"):
+            raise ValueError("country must be IN, AE or OTHER")
+        return v
+
+    @field_validator("event_type")
+    @classmethod
+    def _type_ok(cls, v: str) -> str:
+        if v not in _EVENT_TYPES:
+            raise ValueError(f"event_type must be one of {_EVENT_TYPES}")
+        return v
+
+    @field_validator("to_date")
+    @classmethod
+    def _range_ok(cls, v: date, info) -> date:
+        start = info.data.get("from_date")
+        if start is not None and v < start:
+            raise ValueError("to_date must be >= from_date")
+        return v
+
+
+class EventUpdate(BaseModel):
+    """Partial edit — also used by the RSVP toggle (just `attend`)."""
+
+    title: Optional[str] = None
+    country: Optional[str] = None
+    from_date: Optional[date] = None
+    to_date: Optional[date] = None
+    event_type: Optional[str] = None
+    attend: Optional[bool] = None
+    note: Optional[str] = None
+
+    @field_validator("country")
+    @classmethod
+    def _country_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in ("IN", "AE", "OTHER"):
+            raise ValueError("country must be IN, AE or OTHER")
+        return v
+
+    @field_validator("event_type")
+    @classmethod
+    def _type_ok(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None and v not in _EVENT_TYPES:
+            raise ValueError(f"event_type must be one of {_EVENT_TYPES}")
+        return v
+
+
+class EventOut(BaseModel):
+    id: int
+    title: str
+    country: str
+    from_date: date
+    to_date: date
+    event_type: str
+    attend: Optional[bool]
+    source: str
+    note: str

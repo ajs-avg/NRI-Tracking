@@ -113,6 +113,23 @@ export type TicketAnalysis = {
   results: { filename: string; error?: string; segments: TicketSegment[] }[];
 };
 
+export type GoogleStatus = {
+  configured: boolean;
+  connected: boolean;
+  email: string;
+  last_synced: string | null;
+};
+
+export type GoogleSyncResult = {
+  entries_created: number;
+  entries_updated: number;
+  events_created: number;
+  events_updated: number;
+  scanned: number;
+  skipped: number;
+  last_synced: string | null;
+};
+
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE}${path}`, {
     ...init,
@@ -191,4 +208,23 @@ export const api = {
     if (!res.ok) throw new Error(`${res.status}: ${await res.text().catch(() => "")}`);
     return res.json();
   },
+
+  // --- Google Calendar sync ---
+  googleStatus: (pid: number) => req<GoogleStatus>(`/persons/${pid}/google/status`),
+  googleAuthUrl: (pid: number) =>
+    req<{ url: string }>(`/calendar/google/auth-url?person_id=${pid}`),
+  googleSync: (
+    pid: number,
+    opts?: { monthsBack?: number; monthsFwd?: number; includeTravel?: boolean }
+  ) => {
+    const q = new URLSearchParams();
+    if (opts?.monthsBack != null) q.set("months_back", String(opts.monthsBack));
+    if (opts?.monthsFwd != null) q.set("months_fwd", String(opts.monthsFwd));
+    if (opts?.includeTravel != null) q.set("include_travel", String(opts.includeTravel));
+    const qs = q.toString();
+    return req<GoogleSyncResult>(`/persons/${pid}/google/sync${qs ? `?${qs}` : ""}`, {
+      method: "POST",
+    });
+  },
+  googleDisconnect: (pid: number) => req<void>(`/persons/${pid}/google`, { method: "DELETE" }),
 };

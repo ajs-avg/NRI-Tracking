@@ -189,3 +189,20 @@ class EventOut(BaseModel):
     attend: Optional[bool]
     source: str
     note: str
+
+
+class GoogleStatusOut(BaseModel):
+    configured: bool          # are the server's Google OAuth env vars set?
+    connected: bool           # has this person linked a Google account?
+    email: str = ""
+    last_synced: Optional[str] = None
+
+
+class GoogleSyncOut(BaseModel):
+    entries_created: int = 0      # new presence rows (ManualEntry)
+    entries_updated: int = 0
+    events_created: int = 0       # new commitment rows (CommitmentEvent)
+    events_updated: int = 0
+    scanned: int = 0              # raw Google events looked at
+    skipped: int = 0             # events with no usable signal
+    last_synced: Optional[str] = None

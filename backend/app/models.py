@@ -73,6 +73,9 @@ class ManualEntry(Base):
     # they can decide which calendar date the entry belongs to. "HH:MM" or null.
     dep_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default=None)
     arr_time: Mapped[Optional[str]] = mapped_column(String(5), nullable=True, default=None)
+    # External source id (e.g. "gcal:<event_id>") so a re-sync updates the same row
+    # instead of duplicating. Null for manual/ticket entries.
+    ext_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None, index=True)
 
     person: Mapped["Person"] = relationship(back_populates="entries")
 
@@ -140,7 +143,28 @@ class CommitmentEvent(Base):
     to_date: Mapped[date] = mapped_column(Date)
     event_type: Mapped[str] = mapped_column(String(20), default=EVENT_MANDATORY)
     attend: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True, default=None)
-    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual|csv
+    source: Mapped[str] = mapped_column(String(16), default="manual")  # manual|csv|gcal
     note: Mapped[str] = mapped_column(String(255), default="")
+    # External source id (e.g. "gcal:<event_id>") for idempotent re-sync. Null for
+    # manually-added / CSV-imported events.
+    ext_id: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None, index=True)
 
     person: Mapped["Person"] = relationship(back_populates="events")
+
+
+class GoogleCredential(Base):
+    """Per-person Google OAuth tokens for Calendar sync.
+
+    We persist the long-lived ``refresh_token`` and the short-lived
+    ``access_token`` (+ its expiry). The access token is refreshed on demand
+    before each sync. One row per person (primary key = person_id).
+    """
+
+    __tablename__ = "google_credentials"
+
+    person_id: Mapped[int] = mapped_column(ForeignKey("persons.id"), primary_key=True)
+    email: Mapped[str] = mapped_column(String(255), default="")
+    refresh_token: Mapped[str] = mapped_column(String(512), default="")
+    access_token: Mapped[Optional[str]] = mapped_column(String(2048), nullable=True, default=None)
+    token_expiry: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, default=None)  # ISO 8601
+    last_synced: Mapped[Optional[str]] = mapped_column(String(40), nullable=True, default=None)  # ISO 8601

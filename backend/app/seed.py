@@ -67,6 +67,10 @@ _COLUMN_MIGRATIONS: dict[str, dict[str, str]] = {
     "manual_entries": {
         "dep_time": "VARCHAR(5)",
         "arr_time": "VARCHAR(5)",
+        "ext_id": "VARCHAR(64)",
+    },
+    "commitment_events": {
+        "ext_id": "VARCHAR(64)",
     },
 }
 

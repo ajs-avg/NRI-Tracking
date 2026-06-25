@@ -8,7 +8,7 @@ import calendar as _cal
 import csv
 import io
 import os
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from typing import List, Optional, Tuple
 
 from dotenv import load_dotenv
@@ -18,14 +18,16 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 
 from fastapi import Depends, FastAPI, File, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse
 from sqlalchemy.orm import Session
 
-from . import engine
+from . import engine, gcal
 from .counters import evaluate_counter
 from .database import get_db
 from .models import (
     CommitmentEvent,
     CounterConfig,
+    GoogleCredential,
     ManualEntry,
     Person,
     PlannedTrip,
@@ -40,6 +42,8 @@ from .schemas import (
     EventIn,
     EventOut,
     EventUpdate,
+    GoogleStatusOut,
+    GoogleSyncOut,
     PersonOut,
     SettingsIn,
     SettingsOut,
@@ -338,6 +342,185 @@ def commit_tickets(
             created += 1
     db.commit()
     return {"created": created}
+
+
+# --------------------------------------------------------------------------- #
+# Google Calendar sync (OAuth connect -> sync events into the same engine)
+# --------------------------------------------------------------------------- #
+def _ensure_access_token(db: Session, cred: GoogleCredential) -> str:
+    """Return a valid access token, refreshing via the refresh token if expired."""
+    if cred.access_token and not gcal.is_expired(cred.token_expiry):
+        return cred.access_token
+    if not cred.refresh_token:
+        raise HTTPException(status_code=400, detail="Google account not linked — reconnect.")
+    try:
+        token = gcal.refresh_access_token(cred.refresh_token)
+    except gcal.GoogleCalendarError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+    cred.access_token = token.get("access_token")
+    cred.token_expiry = gcal.expiry_from_response(token)
+    if token.get("refresh_token"):  # Google may rotate it
+        cred.refresh_token = token["refresh_token"]
+    db.commit()
+    return cred.access_token
+
+
+@app.get("/calendar/google/auth-url")
+def google_auth_url(person_id: int = Query(...), db: Session = Depends(get_db)):
+    """Return the Google consent URL the frontend should redirect the user to."""
+    _get_person(db, person_id)
+    if not gcal.is_configured():
+        raise HTTPException(status_code=400, detail="Google OAuth not configured on the server.")
+    return {"url": gcal.build_auth_url(person_id)}
+
+
+@app.get("/calendar/google/callback")
+def google_callback(
+    code: Optional[str] = Query(default=None),
+    state: Optional[str] = Query(default=None),
+    error: Optional[str] = Query(default=None),
+    db: Session = Depends(get_db),
+):
+    """OAuth redirect target. Stores tokens, then bounces back to the frontend."""
+    front = gcal.frontend_base()
+
+    def _back(status: str):
+        if front:
+            return RedirectResponse(url=f"{front}/settings?gcal={status}")
+        return {"gcal": status}  # local dev without a frontend URL
+
+    if error or not code or not state:
+        return _back("error")
+    try:
+        person_id = int(state)
+    except ValueError:
+        return _back("error")
+    if db.get(Person, person_id) is None:
+        return _back("error")
+    try:
+        token = gcal.exchange_code(code)
+    except gcal.GoogleCalendarError:
+        return _back("error")
+
+    access = token.get("access_token")
+    cred = db.get(GoogleCredential, person_id)
+    if cred is None:
+        cred = GoogleCredential(person_id=person_id)
+        db.add(cred)
+    if token.get("refresh_token"):
+        cred.refresh_token = token["refresh_token"]
+    cred.access_token = access
+    cred.token_expiry = gcal.expiry_from_response(token)
+    if access:
+        cred.email = gcal.fetch_email(access) or cred.email
+    db.commit()
+    return _back("connected")
+
+
+@app.get("/persons/{person_id}/google/status", response_model=GoogleStatusOut)
+def google_status(person_id: int, db: Session = Depends(get_db)):
+    _get_person(db, person_id)
+    cred = db.get(GoogleCredential, person_id)
+    return GoogleStatusOut(
+        configured=gcal.is_configured(),
+        connected=cred is not None and bool(cred.refresh_token),
+        email=cred.email if cred else "",
+        last_synced=cred.last_synced if cred else None,
+    )
+
+
+@app.post("/persons/{person_id}/google/sync", response_model=GoogleSyncOut)
+def google_sync(
+    person_id: int,
+    months_back: int = Query(default=24, ge=0, le=120),
+    months_fwd: int = Query(default=12, ge=0, le=120),
+    include_travel: bool = Query(default=True),
+    db: Session = Depends(get_db),
+):
+    """Pull Calendar events in the window and upsert them into our domain.
+
+    All-day country events become PRESENCE rows (ManualEntry, source=gcal) that
+    feed the counting engine; other meaningful events become COMMITMENT rows
+    (CommitmentEvent, source=gcal) used by the trip planner. Re-running is
+    idempotent: rows are matched by the Google event id (ext_id)."""
+    from dateutil.relativedelta import relativedelta
+
+    _get_person(db, person_id)
+    cred = db.get(GoogleCredential, person_id)
+    if cred is None or not cred.refresh_token:
+        raise HTTPException(status_code=400, detail="Google Calendar not connected for this person.")
+
+    access = _ensure_access_token(db, cred)
+    today = date.today()
+    time_min = today - relativedelta(months=months_back)
+    time_max = today + relativedelta(months=months_fwd)
+    try:
+        events = gcal.fetch_events(access, time_min, time_max)
+    except gcal.GoogleCalendarError as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+    res = {
+        "entries_created": 0, "entries_updated": 0,
+        "events_created": 0, "events_updated": 0,
+        "scanned": len(events), "skipped": 0,
+    }
+    for ev in events:
+        candidates = gcal.classify_event(ev)
+        if not candidates:
+            res["skipped"] += 1
+            continue
+        for c in candidates:
+            if c["kind"] == "presence":
+                if not include_travel:
+                    continue
+                row = (
+                    db.query(ManualEntry)
+                    .filter(ManualEntry.person_id == person_id, ManualEntry.ext_id == c["ext_id"])
+                    .first()
+                )
+                if row is not None:
+                    row.country, row.from_date, row.to_date = c["country"], c["from_date"], c["to_date"]
+                    row.note = c["note"][:255]
+                    res["entries_updated"] += 1
+                else:
+                    db.add(ManualEntry(
+                        person_id=person_id, country=c["country"],
+                        from_date=c["from_date"], to_date=c["to_date"],
+                        note=c["note"][:255], source="gcal", ext_id=c["ext_id"],
+                    ))
+                    res["entries_created"] += 1
+            else:  # commitment
+                row = (
+                    db.query(CommitmentEvent)
+                    .filter(CommitmentEvent.person_id == person_id, CommitmentEvent.ext_id == c["ext_id"])
+                    .first()
+                )
+                if row is not None:
+                    # Preserve the user's RSVP (attend) answer across re-syncs.
+                    row.title, row.country = c["title"][:160], c["country"]
+                    row.from_date, row.to_date, row.event_type = c["from_date"], c["to_date"], c["event_type"]
+                    res["events_updated"] += 1
+                else:
+                    db.add(CommitmentEvent(
+                        person_id=person_id, title=c["title"][:160], country=c["country"],
+                        from_date=c["from_date"], to_date=c["to_date"],
+                        event_type=c["event_type"], source="gcal", ext_id=c["ext_id"],
+                    ))
+                    res["events_created"] += 1
+
+    cred.last_synced = datetime.now(timezone.utc).isoformat()
+    db.commit()
+    res["last_synced"] = cred.last_synced
+    return GoogleSyncOut(**res)
+
+
+@app.delete("/persons/{person_id}/google", status_code=204)
+def google_disconnect(person_id: int, db: Session = Depends(get_db)):
+    """Unlink the Google account. Already-imported entries/events are kept."""
+    cred = db.get(GoogleCredential, person_id)
+    if cred is not None:
+        db.delete(cred)
+        db.commit()
 
 
 # --------------------------------------------------------------------------- #

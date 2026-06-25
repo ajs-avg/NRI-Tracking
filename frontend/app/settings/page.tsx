@@ -2,7 +2,13 @@
 
 import * as React from "react";
 import { useProfile } from "@/components/profile-context";
-import { api, type AppSettings, type CounterConfig } from "@/lib/api";
+import {
+  api,
+  type AppSettings,
+  type CounterConfig,
+  type GoogleStatus,
+  type GoogleSyncResult,
+} from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
@@ -57,6 +63,8 @@ export default function SettingsPage() {
           {msg}
         </div>
       )}
+
+      <GoogleCalendarCard personId={current.id} />
 
       {counters.map((c) => (
         <Card key={c.key}>
@@ -134,5 +142,141 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
     </div>
+  );
+}
+
+function GoogleCalendarCard({ personId }: { personId: number }) {
+  const [status, setStatus] = React.useState<GoogleStatus | null>(null);
+  const [result, setResult] = React.useState<GoogleSyncResult | null>(null);
+  const [note, setNote] = React.useState<string | null>(null);
+  const [busy, setBusy] = React.useState(false);
+
+  const loadStatus = React.useCallback(() => {
+    api.googleStatus(personId).then(setStatus).catch(() => setStatus(null));
+  }, [personId]);
+
+  React.useEffect(() => {
+    loadStatus();
+  }, [loadStatus]);
+
+  // Surface the ?gcal=connected|error result of the OAuth redirect, then clean the URL.
+  React.useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const g = params.get("gcal");
+    if (!g) return;
+    setNote(
+      g === "connected"
+        ? "Google Calendar connected ✓ — hit “Sync now” to import your events."
+        : "Could not connect Google Calendar. Please try again."
+    );
+    window.history.replaceState({}, "", window.location.pathname);
+    loadStatus();
+  }, [loadStatus]);
+
+  async function connect() {
+    setBusy(true);
+    setNote(null);
+    try {
+      const { url } = await api.googleAuthUrl(personId);
+      window.location.href = url; // leave the app for Google's consent screen
+    } catch (e) {
+      setNote(`Connect failed: ${(e as Error).message}`);
+      setBusy(false);
+    }
+  }
+
+  async function sync() {
+    setBusy(true);
+    setNote(null);
+    setResult(null);
+    try {
+      const r = await api.googleSync(personId);
+      setResult(r);
+      loadStatus();
+    } catch (e) {
+      setNote(`Sync failed: ${(e as Error).message}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disconnect() {
+    setBusy(true);
+    try {
+      await api.googleDisconnect(personId);
+      setResult(null);
+      loadStatus();
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Google Calendar</CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {note && (
+          <div className="rounded-lg border border-sky-200 bg-sky-50 p-2 text-sm text-sky-700">
+            {note}
+          </div>
+        )}
+
+        {status === null ? (
+          <p className="text-sm text-muted-foreground">Loading…</p>
+        ) : !status.configured ? (
+          <p className="text-sm text-muted-foreground">
+            Google sync isn’t set up on the server yet. Add{" "}
+            <code>GOOGLE_CLIENT_ID</code>, <code>GOOGLE_CLIENT_SECRET</code> and{" "}
+            <code>GOOGLE_REDIRECT_URI</code> to the backend, then refresh.
+          </p>
+        ) : status.connected ? (
+          <>
+            <p className="text-sm">
+              Connected{status.email ? ` as ${status.email}` : ""}.{" "}
+              {status.last_synced && (
+                <span className="text-muted-foreground">
+                  Last synced {new Date(status.last_synced).toLocaleString()}.
+                </span>
+              )}
+            </p>
+            <p className="text-xs text-muted-foreground">
+              Sync imports all-day trips tagged with a country as <b>travel days</b>, and
+              weddings/holidays/functions as <b>commitments</b>. Re-syncing won’t create
+              duplicates.
+            </p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={sync} disabled={busy}>
+                {busy ? "Syncing…" : "Sync now"}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={disconnect} disabled={busy}>
+                Disconnect
+              </Button>
+            </div>
+            {result && (
+              <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-2 text-sm text-emerald-700">
+                Imported {result.entries_created} travel day-range
+                {result.entries_created === 1 ? "" : "s"} and {result.events_created} commitment
+                {result.events_created === 1 ? "" : "s"}
+                {result.entries_updated + result.events_updated > 0 &&
+                  `, updated ${result.entries_updated + result.events_updated}`}
+                . Scanned {result.scanned} events ({result.skipped} skipped).
+              </div>
+            )}
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-muted-foreground">
+              Connect a Google account to automatically import past and upcoming trips and
+              commitments from its calendar.
+            </p>
+            <Button size="sm" onClick={connect} disabled={busy}>
+              {busy ? "Redirecting…" : "Connect Google Calendar"}
+            </Button>
+          </>
+        )}
+      </CardContent>
+    </Card>
   );
 }

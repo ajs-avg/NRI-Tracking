@@ -44,6 +44,10 @@ Deploy in this order: **Supabase → Render → Vercel** (each needs the previou
    | `DATABASE_URL` | the Supabase URI from step 1 |
    | `ANTHROPIC_API_KEY` | your Anthropic key (for ticket AI) — see below |
    | `ANTHROPIC_MODEL` | *(optional)* `claude-opus-4-8` (default) or `claude-haiku-4-5` for cheaper |
+   | `GOOGLE_CLIENT_ID` | *(optional — Calendar sync)* from Google Cloud Console |
+   | `GOOGLE_CLIENT_SECRET` | *(optional — Calendar sync)* from Google Cloud Console |
+   | `GOOGLE_REDIRECT_URI` | *(Calendar sync)* `https://<your-render-url>/calendar/google/callback` |
+   | `FRONTEND_BASE_URL` | *(Calendar sync)* your Vercel URL, e.g. `https://nri-tracker.vercel.app` |
 4. Deploy. Note the service URL, e.g. `https://nri-tracker-api.onrender.com`. Open `/<url>/docs` to confirm it's up.
 
 > CORS is already open (`allow_origins=["*"]`), so the Vercel frontend can call it. Lock this down to your Vercel domain later if you want.
@@ -63,6 +67,39 @@ Deploy in this order: **Supabase → Render → Vercel** (each needs the previou
 4. Deploy. Open the Vercel URL — dashboard should load NKA's data from the backend.
 
 > `NEXT_PUBLIC_*` vars are baked in at build time. If you change the backend URL, **redeploy** the frontend.
+
+---
+
+## 4. Google Calendar sync (optional)
+
+Lets each profile link a Google account so past & upcoming **trips** (all-day events
+tagged with a country → travel days) and **commitments** (weddings/holidays/functions
+→ planner constraints) are pulled in automatically. Skip this whole section if you
+don't want calendar sync — the rest of the app works without it.
+
+**One-time Google setup** (Google Cloud Console):
+1. **console.cloud.google.com** → create a project → **APIs & Services → Library** →
+   enable **Google Calendar API**.
+2. **OAuth consent screen** → User type **External** → fill app name + your email →
+   add scope **`.../auth/calendar.readonly`** → add the 3 users' Gmail addresses as
+   **Test users** → keep the app in **Testing** (no Google verification needed for ≤100
+   test users; users just click past an "unverified app" warning once).
+3. **Credentials → Create Credentials → OAuth client ID → Web application.** Under
+   **Authorized redirect URIs** add both:
+   - `http://localhost:8000/calendar/google/callback` (local dev)
+   - `https://<your-render-url>/calendar/google/callback` (production)
+4. Copy the **Client ID** + **Client Secret** into the Render env vars above (and into
+   `backend/.env` for local testing). Set `GOOGLE_REDIRECT_URI` to the matching callback
+   URL and `FRONTEND_BASE_URL` to your Vercel URL.
+
+**Use it:** open the app → **Settings → Google Calendar → Connect Google Calendar** →
+allow access → **Sync now**. Re-syncing is idempotent (matched by Google event id, so no
+duplicates). Imported rows carry `source = "gcal"` and can be edited/deleted on the
+Entries and Commitments pages like any other.
+
+> Mapping policy: an **all-day** event whose title/location names a country (India/Dubai/
+> etc.) becomes a travel **day-range** that feeds the counters; weddings, holidays,
+> functions, exams, etc. become **commitments**; ordinary timed meetings are ignored.
 
 ---
 

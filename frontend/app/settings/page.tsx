@@ -64,7 +64,8 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <GoogleCalendarCard personId={current.id} />
+      {/* Google Calendar sync is enabled for NKA only. */}
+      {current.code === "NKA" && <GoogleCalendarCard personId={current.id} />}
 
       {counters.map((c) => (
         <Card key={c.key}>
